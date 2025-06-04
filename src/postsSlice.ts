@@ -86,7 +86,7 @@ const postsSlice = createSlice({
       })
       .addCase(addPost.rejected, (state, action) => {
         state.loading = false;
-        state.error = action.error.message || 'Failed to add post';
+        state.error = 'Failed to add post';
       });
   },
 });
