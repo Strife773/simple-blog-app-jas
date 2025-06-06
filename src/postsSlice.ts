@@ -1,69 +1,166 @@
-import { createSlice, createAsyncThunk} from '@reduxjs/toolkit';
+import { createSlice, createAsyncThunk } from '@reduxjs/toolkit';
 import { supabase } from './supabaseClient';
-
-
-interface Post {
-  id: string;
-  title: string;
-  content: string;
-  created_at: string;
-}
-
-interface PostsState {
-  posts: Post[];
-  loading: boolean;
-  error: string | null;
-}
+import { Post, PostFormData, PostUpdateData, PostsState } from './types';
 
 const initialState: PostsState = {
   posts: [],
   loading: false,
   error: null,
+  selectedPost: null,
 };
 
+// Fetch all posts
+export const fetchPosts = createAsyncThunk(
+  'posts/fetchPosts',
+  async (_, { rejectWithValue }) => {
+    try {
+      const { data, error } = await supabase
+        .from('posts')
+        .select(`
+          *,
+          profiles!user_id (
+            id,
+            username,
+            avatar_url
+          )
+        `)
+        .order('created_at', { ascending: false });
 
-export const fetchPosts = createAsyncThunk('posts/fetchPosts', async () => {
-  const { data, error } = await supabase
-    .from('Posts')
-    .select('*')
-    .order('created_at', { ascending: false })
-    .returns<Post[]>(); 
-
-  if (error) throw new Error(error.message);
-  return data || [];
-});
-
-
-export const addPost = createAsyncThunk<
-  Post,
-  { title: string; content: string },
-  { rejectValue: string }
->('posts/addPost', async (newPost, { rejectWithValue }) => {
-  console.log('Inserting post:', newPost);
-  const { data, error } = await supabase
-    .from('Posts')
-    .insert(newPost)
-    .single()
-    .returns<Post>();
-
-  if (error) {
-    console.error('Insert error:', error);
-    return rejectWithValue(error.message);
+      if (error) throw error;
+      return data as Post[];
+    } catch (error: any) {
+      return rejectWithValue(error.message);
+    }
   }
+);
 
-  if (!data) {
-    return rejectWithValue('No data returned from insert');
+// Fetch a single post
+export const fetchPostById = createAsyncThunk(
+  'posts/fetchPostById',
+  async (id: string, { rejectWithValue }) => {
+    try {
+      const { data, error } = await supabase
+        .from('posts')
+        .select(`
+          *,
+          profiles (
+            id,
+            username,
+            avatar_url
+          )
+        `)
+        .eq('id', id)
+        .single();
+
+      if (error) throw error;
+      return data as Post;
+    } catch (error: any) {
+      return rejectWithValue(error.message);
+    }
   }
+);
 
-  return data;
-});
+// Create a new post
+export const createPost = createAsyncThunk(
+  'posts/createPost',
+  async (postData: PostFormData, { rejectWithValue }) => {
+    try {
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user) throw new Error('User must be authenticated to create a post');
+
+      const { data, error } = await supabase
+        .from('posts')
+        .insert({
+          ...postData,
+          user_id: user.id,
+        })
+        .select(`
+          *,
+          profiles!user_id (
+            id,
+            username,
+            avatar_url
+          )
+        `)
+        .single();
+
+      if (error) throw error;
+      return data as Post;
+    } catch (error: any) {
+      return rejectWithValue(error.message);
+    }
+  }
+);
+
+// Update an existing post
+export const updatePost = createAsyncThunk(
+  'posts/updatePost',
+  async ({ id, title, content }: PostUpdateData, { rejectWithValue }) => {
+    try {
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user) throw new Error('User must be authenticated to update a post');
+
+      const { data, error } = await supabase
+        .from('posts')
+        .update({ title, content })
+        .eq('id', id)
+        .eq('user_id', user.id)
+        .select(`
+          *,
+          profiles!user_id (
+            id,
+            username,
+            avatar_url
+          )
+        `)
+        .single();
+
+      if (error) throw error;
+      if (!data) throw new Error('Post not found or unauthorized');
+      
+      return data as Post;
+    } catch (error: any) {
+      return rejectWithValue(error.message);
+    }
+  }
+);
+
+// Delete a post
+export const deletePost = createAsyncThunk(
+  'posts/deletePost',
+  async (id: string, { rejectWithValue }) => {
+    try {
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user) throw new Error('User must be authenticated to delete a post');
+
+      const { error } = await supabase
+        .from('posts')
+        .delete()
+        .eq('id', id)
+        .eq('user_id', user.id); // Ensure user owns the post
+
+      if (error) throw error;
+      return id;
+    } catch (error: any) {
+      return rejectWithValue(error.message);
+    }
+  }
+);
 
 const postsSlice = createSlice({
-  name: 'Posts',
+  name: 'posts',
   initialState,
-  reducers: {},
+  reducers: {
+    clearSelectedPost: (state) => {
+      state.selectedPost = null;
+    },
+    clearError: (state) => {
+      state.error = null;
+    },
+  },
   extraReducers: (builder) => {
     builder
+      // Fetch Posts
       .addCase(fetchPosts.pending, (state) => {
         state.loading = true;
         state.error = null;
@@ -74,21 +171,69 @@ const postsSlice = createSlice({
       })
       .addCase(fetchPosts.rejected, (state, action) => {
         state.loading = false;
-        state.error = action.error.message || 'Failed to fetch posts';
+        state.error = action.payload as string;
       })
-      .addCase(addPost.pending, (state) => {
+      // Fetch Single Post
+      .addCase(fetchPostById.pending, (state) => {
         state.loading = true;
         state.error = null;
       })
-      .addCase(addPost.fulfilled, (state, action) => {
+      .addCase(fetchPostById.fulfilled, (state, action) => {
+        state.loading = false;
+        state.selectedPost = action.payload;
+      })
+      .addCase(fetchPostById.rejected, (state, action) => {
+        state.loading = false;
+        state.error = action.payload as string;
+      })
+      // Create Post
+      .addCase(createPost.pending, (state) => {
+        state.loading = true;
+        state.error = null;
+      })
+      .addCase(createPost.fulfilled, (state, action) => {
         state.loading = false;
         state.posts.unshift(action.payload);
       })
-      .addCase(addPost.rejected, (state, action) => {
+      .addCase(createPost.rejected, (state, action) => {
         state.loading = false;
-        state.error = 'Failed to add post';
+        state.error = action.payload as string;
+      })
+      // Update Post
+      .addCase(updatePost.pending, (state) => {
+        state.loading = true;
+        state.error = null;
+      })
+      .addCase(updatePost.fulfilled, (state, action) => {
+        state.loading = false;
+        const index = state.posts.findIndex((post: Post) => post.id === action.payload.id);
+        if (index !== -1) {
+          state.posts[index] = action.payload;
+        }
+        state.selectedPost = action.payload;
+      })
+      .addCase(updatePost.rejected, (state, action) => {
+        state.loading = false;
+        state.error = action.payload as string;
+      })
+      // Delete Post
+      .addCase(deletePost.pending, (state) => {
+        state.loading = true;
+        state.error = null;
+      })
+      .addCase(deletePost.fulfilled, (state, action) => {
+        state.loading = false;
+        state.posts = state.posts.filter((post: Post) => post.id !== action.payload);
+        if (state.selectedPost?.id === action.payload) {
+          state.selectedPost = null;
+        }
+      })
+      .addCase(deletePost.rejected, (state, action) => {
+        state.loading = false;
+        state.error = action.payload as string;
       });
   },
 });
 
+export const { clearSelectedPost, clearError } = postsSlice.actions;
 export default postsSlice.reducer;

@@ -1,75 +1,78 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useCallback } from "react";
+import { Navigate, useNavigate } from "react-router-dom";
 import { useAppDispatch, useAppSelector } from "./hooks";
-import { fetchPosts, addPost } from "./postsSlice";
+import { checkAuth, signOut, setupAuthListener } from "./authSlice";
+import PostManager from "./components/PostManager";
+import ErrorBoundary from "./components/ErrorBoundary";
 import "./App.css";
 
 const App: React.FC = () => {
+  const navigate = useNavigate();
   const dispatch = useAppDispatch();
-  const { posts, loading, error } = useAppSelector((state) => state.posts);
+  const { user, loading, isInitialized } = useAppSelector((state) => state.auth);
 
-  const [title, setTitle] = useState("");
-  const [content, setContent] = useState("");
-
+  // Initialize auth state only once
   useEffect(() => {
-    dispatch(fetchPosts());
+    const initAuth = async () => {
+      try {
+        await dispatch(checkAuth()).unwrap();
+        await dispatch(setupAuthListener()).unwrap();
+      } catch (err) {
+        console.error('Error initializing auth:', err);
+      }
+    };
+    initAuth();
   }, [dispatch]);
 
-  const handleSubmit = (e: React.FormEvent) => {
-    if (!title.trim() || !content.trim()) return;
-    dispatch(addPost({ title, content }));
-    setTitle("");
-    setContent("");
-  };
+  const handleSignOut = useCallback(async () => {
+    try {
+      await dispatch(signOut()).unwrap();
+      navigate('/');
+    } catch (err) {
+      console.error('Error signing out:', err);
+    }
+  }, [dispatch, navigate]);
+
+  // Show loading state while checking auth
+  if (!isInitialized || loading) {
+    return (
+      <div className="min-h-screen bg-gray-100 flex items-center justify-center">
+        <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600"></div>
+      </div>
+    );
+  }
+
+  // If not authenticated, redirect to login
+  if (!user) {
+    return <Navigate to="/" replace />;
+  }
 
   return (
-    <div className="max-w-2xl mx-auto mt-10 px-4 font-sans">
-      <h1 className="text-3xl font-bold text-center mb-6">Simple Blog</h1>
-
-      {/* Form Card */}
-      <div className="bg-white shadow-md rounded-md p-6 mb-10">
-        <form onSubmit={handleSubmit} className="space-y-4">
-          <input
-            type="text"
-            placeholder="Post Title"
-            value={title}
-            onChange={(e) => setTitle(e.target.value)}
-            className="w-full border border-gray-300 rounded px-4 py-2 focus:outline-none focus:ring-2 focus:ring-blue-400"
-          />
-          <textarea
-            placeholder="Post Content"
-            value={content}
-            onChange={(e) => setContent(e.target.value)}
-            rows={5}
-            className="w-full border border-gray-300 rounded px-4 py-2 focus:outline-none focus:ring-2 focus:ring-blue-400"
-          />
-          <button
-            type="submit"
-            disabled={loading}
-            className="w-full bg-blue-600 hover:bg-blue-700 text-white font-semibold py-2 px-4 rounded disabled:opacity-50"
-          >
-            {loading ? "Posting..." : "Add Post"}
-          </button>
-        </form>
-
-        {error && <p className="text-red-600 mt-2">{error}</p>}
-      </div>
-
-      {/* Posts */}
-      <div className="space-y-6">
-        {posts.map((post) => (
-          <div
-            key={post.id}
-            className="bg-white shadow-sm border border-gray-200 rounded-md p-5"
-          >
-            <h2 className="text-xl font-semibold mb-2">{post.title}</h2>
-            <p className="text-gray-700 mb-3">{post.content}</p>
-            <p className="text-sm text-gray-500">
-              Posted: {new Date(post.created_at).toLocaleString()}
-            </p>
+    <ErrorBoundary>
+      <div className="min-h-screen bg-gray-100">
+        <nav className="bg-white shadow-sm">
+          <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+            <div className="flex justify-between h-16 items-center">
+              <h1 className="text-xl font-semibold">My Assessment</h1>
+              <div className="flex items-center gap-4">
+                <span className="text-gray-600">
+                  Welcome, {user.email}
+                </span>
+                <button
+                  onClick={handleSignOut}
+                  className="bg-red-600 hover:bg-red-700 text-white px-4 py-2 rounded"
+                >
+                  Sign Out
+                </button>
+              </div>
+            </div>
           </div>
-        ))}
+        </nav>
+        <main className="py-8">
+          <PostManager />
+        </main>
       </div>
-    </div>
+    </ErrorBoundary>
   );
 };
 
